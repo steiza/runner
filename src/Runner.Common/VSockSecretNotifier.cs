@@ -119,10 +119,25 @@ namespace GitHub.Runner.Common
         {
             if (_vsock != null && _secretNotificationTask != null)
             {
+                // Stop accepting new payloads and request cancellation first.
+                _channel.Writer.TryComplete();
                 _cancellationTokenSource?.Cancel();
+
+                // Closing the socket before awaiting the background sender prevents
+                // shutdown hangs when SendAsync is blocked on backpressure.
+                _vsock?.Dispose();
+
                 try
                 {
-                    await _secretNotificationTask;
+                    var completedTask = await Task.WhenAny(_secretNotificationTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                    if (completedTask == _secretNotificationTask)
+                    {
+                        await _secretNotificationTask;
+                    }
+                    else
+                    {
+                        Trace.Warning("Timed out waiting for VSocket secret notifier task to stop.");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -131,7 +146,6 @@ namespace GitHub.Runner.Common
 
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
-                _vsock?.Dispose();
                 _vsock = null;
             }
         }
